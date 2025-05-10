@@ -145,7 +145,7 @@ fn capture_image(hwnd: HWND, width: i32, height: i32, device: ID3D11Device) -> I
     while !found {
         // 全民K歌 set WS_EX_LAYERED, which causes the GDI or DXGI to not capture the window correctly
         // Fortunately, PrintWindow with the PRINT_WINDOW_FLAGS(2) flag works
-        _ = unsafe { PrintWindow(hwnd, capture_dc, PRINT_WINDOW_FLAGS(2))};
+        _ = unsafe { PrintWindow(hwnd, capture_dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT))};
 
         found = true;
     
