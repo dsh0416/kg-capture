@@ -19,6 +19,7 @@ This project tries to create a separated window with captured WeSing lyrics, and
 
 ## How-to
 
+1. Download from [here](https://github.com/dsh0416/kg-capture/releases). 在 [Release](https://github.com/dsh0416/kg-capture/releases) 页面下载最新版本
 1. Start WeSing. 打开全民K歌
-2. Reuqest at least one song to create the lyrics window. 至少点一首歌以启动歌词窗口
-3. Open this software. 打开本软件
+1. Reuqest at least one song to create the lyrics window. 至少点一首歌以启动歌词窗口
+1. Open this software. 打开本软件
