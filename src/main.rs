@@ -68,6 +68,10 @@ fn init_window(width: i32, height: i32) -> HWND {
     unsafe { RegisterClassExA(&wc) };
 
     let caption_height = unsafe { GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CXPADDEDBORDER) };
+    let border_thickness_x = unsafe { GetSystemMetrics(SM_CXSIZEFRAME) };
+    let border_thickness_y = unsafe { GetSystemMetrics(SM_CYSIZEFRAME) };
+    let window_width = width + border_thickness_x * 2;
+    let window_height = height + border_thickness_y * 2 + caption_height;
 
     let hwnd = unsafe { CreateWindowExA(
         WINDOW_EX_STYLE(0),
@@ -76,8 +80,8 @@ fn init_window(width: i32, height: i32) -> HWND {
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         100,
         100,
-        width,
-        height + caption_height,
+        window_width,
+        window_height,
         None,
         None,
         Some(wc.hInstance),
