@@ -426,17 +426,3 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         }
     }
 }
-
-unsafe extern "system" fn hooked_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    match msg {
-        WM_DESTROY => {
-            // Handle window destruction
-            println!("Window destroyed");
-            unsafe { PostQuitMessage(0) };
-            exit(0);
-        }
-        _ => {
-            return unsafe { DefWindowProcA(hwnd, msg, wparam, lparam) };
-        }
-    }
-}
