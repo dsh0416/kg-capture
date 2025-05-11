@@ -67,6 +67,8 @@ fn init_window(width: i32, height: i32) -> HWND {
 
     unsafe { RegisterClassExA(&wc) };
 
+    let caption_height = unsafe { GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CXPADDEDBORDER) };
+
     let hwnd = unsafe { CreateWindowExA(
         WINDOW_EX_STYLE(0),
         wc.lpszClassName,
@@ -75,7 +77,7 @@ fn init_window(width: i32, height: i32) -> HWND {
         100,
         100,
         width,
-        height + 32, // add size of toolbar
+        height + caption_height,
         None,
         None,
         Some(wc.hInstance),
