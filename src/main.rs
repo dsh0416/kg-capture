@@ -89,9 +89,10 @@ fn init_window(lyrics_width: i32, lyrics_height: i32, score_width: i32, score_he
     unsafe { RegisterClassExA(&wc) };
 
     let caption_height = unsafe { GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CXPADDEDBORDER) };
-    let border_thickness_x = unsafe { GetSystemMetrics(SM_CXSIZEFRAME) };
-    let border_thickness_y = unsafe { GetSystemMetrics(SM_CYSIZEFRAME) };
-    let window_width = max(lyrics_width, score_width) + border_thickness_x * 2;
+    let border_thickness_x = unsafe { GetSystemMetrics(SM_CXFRAME) };
+    let border_thickness_y = unsafe { GetSystemMetrics(SM_CYFRAME ) };
+    let padding_x = unsafe { GetSystemMetrics(SM_CXPADDEDBORDER) };
+    let window_width = max(lyrics_width, score_width) + border_thickness_x * 2 + padding_x;
     let window_height = lyrics_height + score_height + border_thickness_y * 2 + caption_height;
 
     let hwnd = unsafe { CreateWindowExA(
@@ -115,48 +116,60 @@ fn init_window(lyrics_width: i32, lyrics_height: i32, score_width: i32, score_he
     hwnd
 }
 
-fn init_d3d11(hwnd: HWND, width: i32, height: i32) -> (ID3D11Device, ID3D11DeviceContext, IDXGISwapChain1) {
-    let mut d3d11_device: Option<ID3D11Device> = None;
-    let mut d3d11_device_context: Option<ID3D11DeviceContext> = None;
-    
-    unsafe { D3D11CreateDevice(
-        None,
-        D3D_DRIVER_TYPE_HARDWARE,
-        HMODULE(std::ptr::null_mut()),
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG,
-        Some(&[D3D_FEATURE_LEVEL_11_0]),
-        D3D11_SDK_VERSION,
-        Some(&mut d3d11_device),
-        None,
-        Some(&mut d3d11_device_context)
-    ) }.expect("Failed to create D3D11 device");
-
-    let dxgi_factory : IDXGIFactory2 = unsafe { CreateDXGIFactory2::<IDXGIFactory2>(
-        DXGI_CREATE_FACTORY_DEBUG
-    ) }.expect("Failed to create DXGI factory");
-
-    let swap_chain_desc = DXGI_SWAP_CHAIN_DESC1 {
-        Width: width as u32,
-        Height: height as u32,
-        Format: DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+fn init_d3d11(hwnd: HWND, width: i32, height: i32) -> (ID3D11Device, ID3D11DeviceContext, IDXGISwapChain) {
+    let swap_chain_desc = DXGI_SWAP_CHAIN_DESC {
+        BufferDesc: DXGI_MODE_DESC {
+            Width: width as u32,
+            Height: height as u32,
+            RefreshRate: DXGI_RATIONAL { Numerator: 60, Denominator: 1 },
+            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            ..Default::default()
+        },
         BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-        BufferCount: 1,
+        BufferCount: 2,
+        OutputWindow: hwnd,
+        Windowed: BOOL(1),
         SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        Scaling: DXGI_SCALING_STRETCH,
         SwapEffect: DXGI_SWAP_EFFECT_DISCARD,
-        AlphaMode: DXGI_ALPHA_MODE_IGNORE,
         ..Default::default()
     };
 
-    let swap_chain: IDXGISwapChain1 = unsafe { dxgi_factory.CreateSwapChainForHwnd(
-        d3d11_device.as_ref().unwrap(),
-        hwnd,
-        &swap_chain_desc,
-        None,
-        None
-    ) }.expect("Failed to create swap chain");
+    let mut d3d11_device: Option<ID3D11Device> = None;
+    let mut d3d11_device_context: Option<ID3D11DeviceContext> = None;
+    let mut swap_chain: Option<IDXGISwapChain> = None;
 
-    (d3d11_device.unwrap(), d3d11_device_context.unwrap(), swap_chain)
+    let result = unsafe { D3D11CreateDeviceAndSwapChain(
+        None,
+        D3D_DRIVER_TYPE_HARDWARE,
+        HMODULE(std::ptr::null_mut()),
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        None,
+        D3D11_SDK_VERSION,
+        Some(&swap_chain_desc),
+        Some(&mut swap_chain),
+        Some(&mut d3d11_device),
+        None,
+        Some(&mut d3d11_device_context)
+    ) };
+
+    if result.is_err() {
+        // Fallback to WARP driver
+        unsafe { D3D11CreateDeviceAndSwapChain(
+            None,
+            D3D_DRIVER_TYPE_WARP,
+            HMODULE(std::ptr::null_mut()),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            None,
+            D3D11_SDK_VERSION,
+            Some(&swap_chain_desc),
+            Some(&mut swap_chain),
+            Some(&mut d3d11_device),
+            None,
+            Some(&mut d3d11_device_context)
+        ) }.expect("Failed to create D3D11 device and swap chain");
+    }
+
+    (d3d11_device.unwrap(), d3d11_device_context.unwrap(), swap_chain.unwrap())
 }
 
 fn capture_image_lyrics(hwnd: HWND, lyrics_width: i32, lyrics_height: i32, device: ID3D11Device) -> Option<ID3D11Texture2D>{
