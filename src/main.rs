@@ -182,6 +182,8 @@ fn capture_image_lyrics(hwnd: HWND, lyrics_width: i32, lyrics_height: i32, devic
     // Fortunately, PrintWindow with the PRINT_WINDOW_FLAGS(2) flag works
     _ = unsafe { PrintWindow(hwnd, capture_dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT))}; 
 
+    // TODO: maybe try using Windows Graphics Capture API to avoid flickering?
+
     let mut found = true;
 
     // try at most 100 times to get the bitmap
@@ -202,6 +204,10 @@ fn capture_image_lyrics(hwnd: HWND, lyrics_width: i32, lyrics_height: i32, devic
     }
 
     if !found {
+        _ = unsafe { DeleteObject(bitmap.into()) };
+        _ = unsafe { DeleteDC(capture_dc) };
+        _ = unsafe { ReleaseDC(Some(hwnd), window_dc) };
+
         // flickering, return None
         return None;
     }
