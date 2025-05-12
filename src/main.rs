@@ -61,7 +61,6 @@ fn main() {
             // copy
             let texture_score = capture_image_score(hwnd_capture_score, width_score, height_score, device.clone());
             let texture_lyrics = capture_image_lyrics(hwnd_capture_lyrics, width_lyrics, height_lyrics, device.clone());
-            // let texture_lyrics: Option<ID3D11Texture2D> = None;
             if texture_lyrics.is_some() {
                 device_context.CopySubresourceRegion(&frame_buffer, 0, 0, 0, 0,  &texture_lyrics.unwrap(), 0, None);
             }
@@ -213,7 +212,7 @@ fn capture_image_lyrics(hwnd: HWND, lyrics_width: i32, lyrics_height: i32, devic
         Height: lyrics_height as u32,
         MipLevels: 1,
         ArraySize: 1,
-        Format: DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
         SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
         Usage: D3D11_USAGE_DEFAULT,
         BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
