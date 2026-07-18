@@ -1,6 +1,7 @@
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
@@ -9,6 +10,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ipc_channel::ipc::{IpcOneShotServer, IpcReceiver, IpcSender};
 use kg_capture_protocol::{HookEvent, HookHandshake, HostCommand, PROTOCOL_VERSION, SessionNonce};
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+};
+
+const WESING_PROCESS_NAME: &str = "WeSing.exe";
+
 #[derive(Clone, Debug)]
 pub struct Session {
     pub process_id: u32,
@@ -55,6 +63,12 @@ impl Session {
         }
         if executable.extension().and_then(|value| value.to_str()) != Some("exe") {
             return Err("selected WeSing program is not an .exe file".into());
+        }
+        if process_is_running(WESING_PROCESS_NAME)? {
+            return Err(
+                "检测到 WeSing 已在运行。请先完全退出已打开的 WeSing（包括后台进程），然后再启动。"
+                    .into(),
+            );
         }
         let (server, endpoint) = IpcOneShotServer::<HookHandshake>::new()
             .map_err(|error| format!("create IPC server: {error}"))?;
@@ -198,6 +212,56 @@ impl Session {
             level,
             format_args!("receive event {event:?}"),
         );
+    }
+}
+
+fn process_is_running(expected_name: &str) -> Result<bool, String> {
+    let snapshot = ProcessSnapshot::new()?;
+    let mut entry = PROCESSENTRY32W {
+        dwSize: size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    unsafe { Process32FirstW(snapshot.handle, &mut entry) }
+        .map_err(|error| format!("检查正在运行的程序失败: {error}"))?;
+
+    loop {
+        if process_name_matches(&entry, expected_name) {
+            return Ok(true);
+        }
+        if unsafe { Process32NextW(snapshot.handle, &mut entry) }.is_err() {
+            return Ok(false);
+        }
+    }
+}
+
+fn process_name_matches(entry: &PROCESSENTRY32W, expected_name: &str) -> bool {
+    process_name(entry).eq_ignore_ascii_case(expected_name)
+}
+
+fn process_name(entry: &PROCESSENTRY32W) -> String {
+    let length = entry
+        .szExeFile
+        .iter()
+        .position(|character| *character == 0)
+        .unwrap_or(entry.szExeFile.len());
+    String::from_utf16_lossy(&entry.szExeFile[..length])
+}
+
+struct ProcessSnapshot {
+    handle: HANDLE,
+}
+
+impl ProcessSnapshot {
+    fn new() -> Result<Self, String> {
+        let handle = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
+            .map_err(|error| format!("创建进程列表失败: {error}"))?;
+        Ok(Self { handle })
+    }
+}
+
+impl Drop for ProcessSnapshot {
+    fn drop(&mut self) {
+        let _ = unsafe { CloseHandle(self.handle) };
     }
 }
 
@@ -356,5 +420,24 @@ mod tests {
             LogLevel::Debug
         );
         assert_eq!(minimum_log_level(Some("error")), LogLevel::Error);
+    }
+
+    #[test]
+    fn process_name_matching_is_case_insensitive() {
+        let mut entry = PROCESSENTRY32W::default();
+        for (destination, source) in entry.szExeFile.iter_mut().zip("WeSing.exe".encode_utf16()) {
+            *destination = source;
+        }
+
+        assert!(process_name_matches(&entry, "WESING.EXE"));
+        assert!(!process_name_matches(&entry, "Other.exe"));
+    }
+
+    #[test]
+    fn running_process_lookup_finds_current_process() {
+        let executable = env::current_exe().unwrap();
+        let process_name = executable.file_name().unwrap().to_str().unwrap();
+
+        assert!(process_is_running(process_name).unwrap());
     }
 }

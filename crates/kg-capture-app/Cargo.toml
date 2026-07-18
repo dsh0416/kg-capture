@@ -22,4 +22,9 @@ tracing-subscriber.workspace = true
 
 [dependencies.windows]
 workspace = true
-features = ["Win32_Globalization", "Win32_Graphics_DirectWrite"]
+features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_DirectWrite",
+    "Win32_System_Diagnostics_ToolHelp",
+]

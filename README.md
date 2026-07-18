@@ -71,11 +71,10 @@ cargo xtask test
 ## Usage
 
 1. Start `kg-capture.exe`.
-2. Browse to the x86 `WeSing.exe`.
+2. Completely exit any running WeSing instance (including its background process), then browse to the x86 `WeSing.exe`. KG Capture will refuse to launch another copy while `WeSing.exe` is still running because WeSing's single-instance check would bypass the new hooked process.
 3. Select **启动 WeSing**. KG Capture launches it as a suspended child, injects the x86 hook, then resumes it with WeSing's installation directory as its working directory.
-4. Open a song or another WeSing view that loads lyrics.
-5. Select **开始歌词同步**. The first semantic timeline may arrive when playback starts or the lyric view next updates.
-6. Capture the iced KG Lyrics window in OBS if desired.
+4. KG Capture automatically starts lyric synchronization after the hook connects. Open a song or another WeSing view that loads lyrics; the first semantic timeline may arrive when playback starts or the lyric view next updates.
+5. Capture the iced KG Lyrics window in OBS if desired.
 
 Launching WeSing as a child avoids requesting access to an unrelated existing process. Attaching to an existing process remains an injector-only diagnostic mode.
 

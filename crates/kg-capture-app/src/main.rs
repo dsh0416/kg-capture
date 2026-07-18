@@ -33,8 +33,6 @@ enum Message {
     Launch,
     Connected(Result<Session, String>),
     HookEvent(Result<HookEvent, String>),
-    Start,
-    Stop,
     Disconnect,
     ShowLyricsWindow,
     BackgroundColorChanged(String),
@@ -247,24 +245,23 @@ impl App {
                     Message::Connected,
                 )
             }
-            Message::Connected(Ok(session)) => {
-                self.connection = ConnectionState::Connected;
-                self.detail = format!("已连接到进程 {}，可开始读取歌词。", session.process_id);
-                self.session = Some(session.clone());
-                Task::run(event_stream(session.event_receiver), Message::HookEvent)
-            }
+            Message::Connected(Ok(session)) => match session.send(HostCommand::StartCapture) {
+                Ok(()) => {
+                    self.connection = ConnectionState::Connected;
+                    self.detail =
+                        format!("已连接到进程 {}，正在初始化歌词同步…", session.process_id);
+                    self.session = Some(session.clone());
+                    Task::run(event_stream(session.event_receiver), Message::HookEvent)
+                }
+                Err(error) => {
+                    self.connection = ConnectionState::Failed;
+                    self.detail = error;
+                    Task::none()
+                }
+            },
             Message::Connected(Err(error)) => {
                 self.connection = ConnectionState::Failed;
                 self.detail = error;
-                Task::none()
-            }
-            Message::Start => {
-                self.send(HostCommand::StartCapture);
-                self.detail = "正在定位歌词模型和播放时钟…".into();
-                Task::none()
-            }
-            Message::Stop => {
-                self.send(HostCommand::StopCapture);
                 Task::none()
             }
             Message::Disconnect => {
@@ -379,7 +376,7 @@ impl App {
         match event {
             HookEvent::CaptureStarted => {
                 self.connection = ConnectionState::Streaming;
-                self.detail = "歌词同步已就绪。".into();
+                self.detail = "歌词同步已就绪，正在等待 WeSing 加载歌词…".into();
             }
             HookEvent::CaptureStopped => {
                 self.connection = ConnectionState::Connected;
@@ -436,12 +433,6 @@ impl App {
             ConnectionState::Disconnected | ConnectionState::Failed
         ) && !self.executable_path.trim().is_empty();
         let launch = button("启动 WeSing").on_press_maybe(can_launch.then_some(Message::Launch));
-        let start = button("开始歌词同步").on_press_maybe(
-            (self.connection == ConnectionState::Connected).then_some(Message::Start),
-        );
-        let stop = button("停止").on_press_maybe(
-            (self.connection == ConnectionState::Streaming).then_some(Message::Stop),
-        );
         let disconnect = button("断开").on_press_maybe(
             matches!(
                 self.connection,
@@ -502,7 +493,7 @@ impl App {
             text(format!("状态：{status}")),
             text(&self.detail),
             row![executable, browse].spacing(8),
-            row![launch, start, stop, disconnect].spacing(12),
+            row![launch, disconnect].spacing(12),
             lyrics_window,
             text("歌词窗口样式").size(20),
             row![
