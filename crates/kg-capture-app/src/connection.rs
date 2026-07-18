@@ -3,7 +3,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -14,7 +14,28 @@ pub struct Session {
     pub process_id: u32,
     pub command_sender: IpcSender<HostCommand>,
     pub event_receiver: Arc<Mutex<IpcReceiver<HookEvent>>>,
-    pub log_directory: PathBuf,
+    log_directory: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum LogLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Off,
+}
+
+impl LogLevel {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Debug => "DEBUG",
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Error => "ERROR",
+            Self::Off => "OFF",
+        }
+    }
 }
 
 impl Session {
@@ -48,6 +69,7 @@ impl Session {
         let hook_log = log_directory.join("hook.log");
         append_log(
             &host_log,
+            LogLevel::Info,
             format_args!(
                 "session starting executable={} pid={} protocol={}",
                 executable.display(),
@@ -56,8 +78,8 @@ impl Session {
             ),
         );
         let with_logs = |error: String| {
-            append_log(&host_log, format_args!("ERROR {error}"));
-            format!("{error}\n诊断日志：{}", log_directory.display())
+            append_log(&host_log, LogLevel::Error, format_args!("{error}"));
+            error
         };
         let injector = component_path("KG_CAPTURE_INJECTOR_PATH", "kg-capture-injector.exe")
             .map_err(&with_logs)?;
@@ -65,6 +87,7 @@ impl Session {
             component_path("KG_CAPTURE_HOOK_PATH", "kg_capture_hook.dll").map_err(&with_logs)?;
         append_log(
             &host_log,
+            LogLevel::Debug,
             format_args!(
                 "components injector={} hook={}",
                 injector.display(),
@@ -109,28 +132,27 @@ impl Session {
             .map_err(|error| format!("launch {}: {error}", injector.display()))?;
         if !status.success() {
             let error = injector_error(status, &status_file);
-            append_log(&host_log, format_args!("ERROR injector: {error}"));
-            return Err(format!("{error}\n诊断日志：{}", log_directory.display()));
+            append_log(
+                &host_log,
+                LogLevel::Error,
+                format_args!("injector: {error}"),
+            );
+            return Err(error);
         }
-        append_log(&host_log, format_args!("injector completed successfully"));
+        append_log(
+            &host_log,
+            LogLevel::Info,
+            format_args!("injector completed successfully"),
+        );
         let _ = fs::remove_file(&status_file);
 
         let (_, handshake) = accept_receiver
             .recv_timeout(Duration::from_secs(10))
-            .map_err(|error| {
-                format!(
-                    "hook IPC handshake timed out: {error}\n诊断日志：{}",
-                    log_directory.display()
-                )
-            })?
-            .map_err(|error| {
-                format!(
-                    "accept hook IPC connection: {error}\n诊断日志：{}",
-                    log_directory.display()
-                )
-            })?;
+            .map_err(|error| with_logs(format!("hook IPC handshake timed out: {error}")))?
+            .map_err(|error| with_logs(format!("accept hook IPC connection: {error}")))?;
         append_log(
             &host_log,
+            LogLevel::Info,
             format_args!(
                 "hook handshake pid={} protocol={}",
                 handshake.hello.process_id, handshake.hello.protocol_version
@@ -157,6 +179,7 @@ impl Session {
     pub fn send(&self, command: HostCommand) -> Result<(), String> {
         append_log(
             &self.log_directory.join("host.log"),
+            LogLevel::Debug,
             format_args!("send command {command:?}"),
         );
         self.command_sender
@@ -165,11 +188,14 @@ impl Session {
     }
 
     pub fn log_event(&self, event: &HookEvent) {
-        if matches!(event, HookEvent::Playback(_)) {
-            return;
-        }
+        let level = match event {
+            HookEvent::Warning(_) => LogLevel::Warn,
+            HookEvent::Error(_) => LogLevel::Error,
+            _ => LogLevel::Debug,
+        };
         append_log(
             &self.log_directory.join("host.log"),
+            level,
             format_args!("receive event {event:?}"),
         );
     }
@@ -195,14 +221,47 @@ fn create_log_directory(nonce: SessionNonce) -> Result<PathBuf, String> {
     Ok(directory)
 }
 
-fn append_log(path: &Path, arguments: std::fmt::Arguments<'_>) {
+fn append_log(path: &Path, level: LogLevel, arguments: std::fmt::Arguments<'_>) {
+    if level < configured_log_level() {
+        return;
+    }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|value| value.as_millis())
             .unwrap_or(0);
-        let _ = writeln!(file, "{timestamp} {arguments}");
+        let _ = writeln!(file, "{timestamp} {} {arguments}", level.label());
     }
+}
+
+fn configured_log_level() -> LogLevel {
+    static LEVEL: OnceLock<LogLevel> = OnceLock::new();
+    *LEVEL.get_or_init(|| minimum_log_level(env::var("RUST_LOG").ok().as_deref()))
+}
+
+fn minimum_log_level(filter: Option<&str>) -> LogLevel {
+    let mut global = None;
+    let mut package = None;
+    for directive in filter.into_iter().flat_map(|value| value.split(',')) {
+        let directive = directive.trim();
+        let (target, level) = directive
+            .rsplit_once('=')
+            .map_or((None, directive), |(target, level)| (Some(target), level));
+        let level = match level.trim().to_ascii_lowercase().as_str() {
+            "trace" | "debug" => LogLevel::Debug,
+            "info" => LogLevel::Info,
+            "warn" => LogLevel::Warn,
+            "error" => LogLevel::Error,
+            "off" => LogLevel::Off,
+            _ => continue,
+        };
+        match target {
+            Some(target) if target.trim().starts_with("kg_capture") => package = Some(level),
+            None => global = Some(level),
+            _ => {}
+        }
+    }
+    package.or(global).unwrap_or(LogLevel::Info)
 }
 
 fn injector_error(status: std::process::ExitStatus, status_file: &Path) -> String {
@@ -287,5 +346,15 @@ mod tests {
             nonce_hex(SessionNonce([0xab; 16])),
             "abababababababababababababababab"
         );
+    }
+
+    #[test]
+    fn log_level_defaults_to_info_and_honors_package_filter() {
+        assert_eq!(minimum_log_level(None), LogLevel::Info);
+        assert_eq!(
+            minimum_log_level(Some("warn,kg_capture=debug")),
+            LogLevel::Debug
+        );
+        assert_eq!(minimum_log_level(Some("error")), LogLevel::Error);
     }
 }

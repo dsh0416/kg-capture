@@ -23,7 +23,7 @@ IPC carries two kinds of semantic updates:
 
 The iced process performs all text layout and highlighting, so rendering follows its own logical-pixel scale rather than WeSing's GDI/GDI+ DPI behavior.
 
-The host uses separate windows: `KG Capture` contains connection, diagnostic, and lyric appearance controls, while `KG Lyrics` contains only the lyric presentation intended for OBS capture. The control window can adjust the lyric background color, text color, active-line font size, candidate-line font size, and left/center/right alignment in real time. Its font list is populated at startup from the installed Windows font families through DirectWrite and uses localized display names from the preferred Windows UI languages. The lyric window can be closed independently and reopened from the control window.
+The host uses separate windows: `KG Capture` contains connection, diagnostic, and lyric appearance controls, while `KG Lyrics` contains only the lyric presentation intended for OBS capture. The control window can adjust the lyric background color, text color, playback highlight color, active-line font size, candidate-line font size, and left/center/right alignment in real time. Its font list is populated at startup from the installed Windows font families through DirectWrite and uses localized display names from the preferred Windows UI languages. The lyric window can be closed independently and reopened from the control window.
 
 ## Build
 
@@ -89,12 +89,12 @@ Each launch creates a session directory under:
 %LOCALAPPDATA%\kg-capture\logs\<timestamp>-<host-pid>-<session>
 ```
 
-The iced UI shows the exact directory. It contains:
+The directory is intentionally kept out of the UI. It contains:
 
-- `host.log`: selected components, IPC handshake, commands, timeline, warnings, and errors.
-- `injector.log`: suspended process creation, DLL injection, and `kg_capture_start` status.
-- `hook.log`: `KSongsUI.dll` loading, PE/RTTI lookup, resolved virtual-method addresses, function-byte verification, Retour status, callback counts, timeline pointers, and accepted/rejected lyric lines.
+- `host.log`: session lifecycle, IPC handshake, warnings, and errors.
+- `injector.log`: process launch, DLL injection, and `kg_capture_start` status.
+- `hook.log`: `KSongsUI.dll` loading, hook lifecycle, timeline changes, warnings, and errors.
 
-When reporting a failure, include all three files. If `hook.log` has no callback entries after "detour enabled", the selected WeSing view is not calling the two known lyric update methods. If it has callbacks followed by snapshot or timeline extraction failures, the internal object layout differs and the offsets need to be updated.
+Logs default to `INFO` and above. Set `RUST_LOG=kg_capture=debug` before launching the host to include per-event records, callback counts, PE/RTTI details, timeline pointers, and accepted/rejected lyric diagnostics. When reporting a failure, include all three files; enable `DEBUG` first when investigating whether a WeSing view calls the known lyric update methods.
 
-Set `RUST_LOG=kg_capture=debug` when launching the host for additional console diagnostics. The hook never sends target-process pointers over IPC; all UTF-16 strings and timing values are copied into owned Rust values first, with line, word, string-length, and readable-memory bounds.
+The hook never sends target-process pointers over IPC; all UTF-16 strings and timing values are copied into owned Rust values first, with line, word, string-length, and readable-memory bounds.

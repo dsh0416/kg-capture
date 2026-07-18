@@ -5,6 +5,7 @@ use std::io::Write;
 use std::mem::{MaybeUninit, size_of, transmute};
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -42,18 +43,42 @@ use windows::core::{Error as WindowsError, PCSTR, PCWSTR, PWSTR};
 
 const REMOTE_CALL_TIMEOUT_MS: u32 = 15_000;
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum LogLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Off,
+}
+
+impl LogLevel {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Debug => "DEBUG",
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Error => "ERROR",
+            Self::Off => "OFF",
+        }
+    }
+}
+
 fn main() {
     std::panic::set_hook(Box::new(|information| {
-        injector_log(format_args!("PANIC {information}"));
+        injector_log(LogLevel::Error, format_args!("PANIC {information}"));
     }));
-    injector_log(format_args!(
-        "injector starting pid={} arch={}",
-        std::process::id(),
-        std::env::consts::ARCH
-    ));
+    injector_log(
+        LogLevel::Info,
+        format_args!(
+            "injector starting pid={} arch={}",
+            std::process::id(),
+            std::env::consts::ARCH
+        ),
+    );
     if let Err(error) = run() {
         let message = format!("kg-capture-injector: {error}");
-        injector_log(format_args!("ERROR {message}"));
+        injector_log(LogLevel::Error, format_args!("{message}"));
         if let Some(path) = env::var_os("KG_CAPTURE_INJECTOR_STATUS_FILE") {
             let _ = std::fs::write(path, &message);
         }
@@ -68,11 +93,14 @@ fn run() -> Result<(), InjectorError> {
     }
 
     let arguments = Arguments::parse(env::args().skip(1))?;
-    injector_log(format_args!(
-        "arguments parsed dll={} hook_log={}",
-        arguments.dll.display(),
-        arguments.hook_log.display()
-    ));
+    injector_log(
+        LogLevel::Debug,
+        format_args!(
+            "arguments parsed dll={} hook_log={}",
+            arguments.dll.display(),
+            arguments.hook_log.display()
+        ),
+    );
     let canonical_dll = arguments
         .dll
         .canonicalize()
@@ -106,17 +134,23 @@ fn run() -> Result<(), InjectorError> {
             unsafe { inject(process.raw(), process_id, &canonical_dll, &bootstrap) }
         }
         Target::Launch(executable) => {
-            injector_log(format_args!("launching target {}", executable.display()));
+            injector_log(
+                LogLevel::Info,
+                format_args!("launching target {}", executable.display()),
+            );
             let mut child = LaunchedProcess::suspended(&executable, &arguments.launch_arguments)?;
-            injector_log(format_args!(
-                "target created suspended pid={}",
-                child.process_id
-            ));
+            injector_log(
+                LogLevel::Debug,
+                format_args!("target created suspended pid={}", child.process_id),
+            );
             validate_x86_target(child.process.raw())?;
             let mut entrypoint_gate = EntrypointGate::arm(child.process.raw())?;
             child.run_loader_to_entrypoint(entrypoint_gate.address())?;
             entrypoint_gate.restore()?;
-            injector_log(format_args!("injecting before target entry point executes"));
+            injector_log(
+                LogLevel::Info,
+                format_args!("injecting before target entry point executes"),
+            );
             unsafe {
                 inject(
                     child.process.raw(),
@@ -126,7 +160,10 @@ fn run() -> Result<(), InjectorError> {
                 )?;
             }
             child.start()?;
-            injector_log(format_args!("target primary thread resumed"));
+            injector_log(
+                LogLevel::Info,
+                format_args!("target primary thread resumed"),
+            );
             if let Some(pid_file) = &arguments.pid_file {
                 std::fs::write(pid_file, child.process_id.to_string()).map_err(|source| {
                     InjectorError::Io {
@@ -136,10 +173,13 @@ fn run() -> Result<(), InjectorError> {
                 })?;
             }
             child.keep_running();
-            injector_log(format_args!(
-                "injection complete; target resumed pid={}",
-                child.process_id
-            ));
+            injector_log(
+                LogLevel::Info,
+                format_args!(
+                    "injection complete; target resumed pid={}",
+                    child.process_id
+                ),
+            );
             let _ = writeln!(std::io::stdout(), "launched process {}", child.process_id);
             Ok(())
         }
@@ -171,9 +211,12 @@ unsafe fn inject(
             .ok_or(InjectorError::MissingExport("LoadLibraryW"))? as usize;
     let load_library_rva = local_load_library - local_kernel32.0 as usize;
     let remote_load_library = remote_kernel32 + load_library_rva;
-    injector_log(format_args!(
-        "calling remote LoadLibraryW kernel32=0x{remote_kernel32:08x} function=0x{remote_load_library:08x}"
-    ));
+    injector_log(
+        LogLevel::Debug,
+        format_args!(
+            "calling remote LoadLibraryW kernel32=0x{remote_kernel32:08x} function=0x{remote_load_library:08x}"
+        ),
+    );
 
     let remote_module =
         unsafe { call_remote(process, remote_load_library, remote_dll_path.pointer())? };
@@ -191,9 +234,12 @@ unsafe fn inject(
     .ok_or(InjectorError::MissingExport("kg_capture_start"))? as usize;
     let start_rva = local_start - local_dll.raw().0 as usize;
     let remote_start = remote_module as usize + start_rva;
-    injector_log(format_args!(
-        "hook loaded base=0x{remote_module:08x}; kg_capture_start=0x{remote_start:08x}"
-    ));
+    injector_log(
+        LogLevel::Debug,
+        format_args!(
+            "hook loaded base=0x{remote_module:08x}; kg_capture_start=0x{remote_start:08x}"
+        ),
+    );
 
     let bootstrap_bytes = unsafe {
         std::slice::from_raw_parts(
@@ -212,14 +258,20 @@ unsafe fn inject(
         "injected {} into process {process_id}",
         dll.display()
     );
-    injector_log(format_args!(
-        "kg_capture_start succeeded dll={} pid={process_id}",
-        dll.display()
-    ));
+    injector_log(
+        LogLevel::Info,
+        format_args!(
+            "kg_capture_start succeeded dll={} pid={process_id}",
+            dll.display()
+        ),
+    );
     Ok(())
 }
 
-fn injector_log(arguments: std::fmt::Arguments<'_>) {
+fn injector_log(level: LogLevel, arguments: std::fmt::Arguments<'_>) {
+    if level < configured_log_level() {
+        return;
+    }
     let Some(path) = env::var_os("KG_CAPTURE_INJECTOR_LOG_FILE") else {
         return;
     };
@@ -231,8 +283,38 @@ fn injector_log(arguments: std::fmt::Arguments<'_>) {
             .duration_since(UNIX_EPOCH)
             .map(|value| value.as_millis())
             .unwrap_or(0);
-        let _ = writeln!(file, "{timestamp} {arguments}");
+        let _ = writeln!(file, "{timestamp} {} {arguments}", level.label());
     }
+}
+
+fn configured_log_level() -> LogLevel {
+    static LEVEL: OnceLock<LogLevel> = OnceLock::new();
+    *LEVEL.get_or_init(|| minimum_log_level(env::var("RUST_LOG").ok().as_deref()))
+}
+
+fn minimum_log_level(filter: Option<&str>) -> LogLevel {
+    let mut global = None;
+    let mut package = None;
+    for directive in filter.into_iter().flat_map(|value| value.split(',')) {
+        let directive = directive.trim();
+        let (target, level) = directive
+            .rsplit_once('=')
+            .map_or((None, directive), |(target, level)| (Some(target), level));
+        let level = match level.trim().to_ascii_lowercase().as_str() {
+            "trace" | "debug" => LogLevel::Debug,
+            "info" => LogLevel::Info,
+            "warn" => LogLevel::Warn,
+            "error" => LogLevel::Error,
+            "off" => LogLevel::Off,
+            _ => continue,
+        };
+        match target {
+            Some(target) if target.trim().starts_with("kg_capture") => package = Some(level),
+            None => global = Some(level),
+            _ => {}
+        }
+    }
+    package.or(global).unwrap_or(LogLevel::Info)
 }
 
 fn validate_x86_target(process: HANDLE) -> Result<(), InjectorError> {
@@ -594,9 +676,10 @@ impl LaunchedProcess {
     }
 
     fn run_loader_to_entrypoint(&mut self, entrypoint: usize) -> Result<(), InjectorError> {
-        injector_log(format_args!(
-            "entry-point gate armed at 0x{entrypoint:08x}; resuming Windows loader"
-        ));
+        injector_log(
+            LogLevel::Debug,
+            format_args!("entry-point gate armed at 0x{entrypoint:08x}; resuming Windows loader"),
+        );
         self.start()?;
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
@@ -623,9 +706,12 @@ impl LaunchedProcess {
                 });
             }
             if context.Eip as usize == entrypoint {
-                injector_log(format_args!(
-                    "Windows loader complete; primary thread stopped at 0x{entrypoint:08x}"
-                ));
+                injector_log(
+                    LogLevel::Debug,
+                    format_args!(
+                        "Windows loader complete; primary thread stopped at 0x{entrypoint:08x}"
+                    ),
+                );
                 return Ok(());
             }
 
@@ -675,10 +761,13 @@ impl EntrypointGate {
         let address = image_base + entrypoint_rva as usize;
         let original: [u8; 2] = read_remote_value(process, address)?;
         write_remote_code(process, address, &[0xeb, 0xfe])?;
-        injector_log(format_args!(
-            "patched target entry point image=0x{image_base:08x} rva=0x{entrypoint_rva:08x} original={:02x}{:02x}",
-            original[0], original[1]
-        ));
+        injector_log(
+            LogLevel::Debug,
+            format_args!(
+                "patched target entry point image=0x{image_base:08x} rva=0x{entrypoint_rva:08x} original={:02x}{:02x}",
+                original[0], original[1]
+            ),
+        );
         Ok(Self {
             process,
             address,
@@ -694,10 +783,10 @@ impl EntrypointGate {
     fn restore(&mut self) -> Result<(), InjectorError> {
         write_remote_code(self.process, self.address, &self.original)?;
         self.restored = true;
-        injector_log(format_args!(
-            "restored target entry point at 0x{:08x}",
-            self.address
-        ));
+        injector_log(
+            LogLevel::Debug,
+            format_args!("restored target entry point at 0x{:08x}", self.address),
+        );
         Ok(())
     }
 }

@@ -36,10 +36,10 @@ enum Message {
     Start,
     Stop,
     Disconnect,
-    OpenLogs,
     ShowLyricsWindow,
     BackgroundColorChanged(String),
     TextColorChanged(String),
+    HighlightColorChanged(String),
     LyricsFontChanged(LyricsFont),
     LyricsAlignmentChanged(LyricsAlignment),
     ActiveFontSizeChanged(f32),
@@ -145,6 +145,8 @@ struct LyricsAppearance {
     background: Color,
     text_input: String,
     text: Color,
+    highlight_input: String,
+    highlight: Color,
     font: LyricsFont,
     alignment: LyricsAlignment,
     active_font_size: f32,
@@ -158,6 +160,8 @@ impl Default for LyricsAppearance {
             background: Color::from_rgb8(0x29, 0x2b, 0x2f),
             text_input: "#F5F5F5".into(),
             text: Color::from_rgb8(0xf5, 0xf5, 0xf5),
+            highlight_input: "#FFD54F".into(),
+            highlight: Color::from_rgb8(0xff, 0xd5, 0x4f),
             font: LyricsFont::System,
             alignment: LyricsAlignment::Center,
             active_font_size: 38.0,
@@ -174,9 +178,7 @@ struct App {
     session: Option<Session>,
     timeline: Option<LyricTimeline>,
     playback: Option<PlaybackPosition>,
-    semantic_events: u64,
     executable_path: String,
-    log_directory: Option<std::path::PathBuf>,
     available_fonts: Vec<LyricsFont>,
     lyrics_appearance: LyricsAppearance,
 }
@@ -202,13 +204,11 @@ impl App {
                 control_window,
                 lyrics_window: Some(lyrics_window),
                 connection: ConnectionState::Disconnected,
-                detail: "选择 WeSing.exe；程序将以子进程方式启动并读取歌词语义数据。".into(),
+                detail: "选择 WeSing.exe；程序将以子进程方式启动并读取歌词。".into(),
                 session: None,
                 timeline: None,
                 playback: None,
-                semantic_events: 0,
                 executable_path: String::new(),
-                log_directory: None,
                 available_fonts,
                 lyrics_appearance,
             },
@@ -240,7 +240,7 @@ impl App {
             }
             Message::Launch => {
                 self.connection = ConnectionState::Connecting;
-                self.detail = "正在挂起启动 WeSing 并初始化 x86 歌词 hook…".into();
+                self.detail = "正在启动 WeSing 并初始化歌词同步…".into();
                 let executable = std::path::PathBuf::from(self.executable_path.clone());
                 Task::perform(
                     async move { Session::connect(executable) },
@@ -249,12 +249,7 @@ impl App {
             }
             Message::Connected(Ok(session)) => {
                 self.connection = ConnectionState::Connected;
-                self.detail = format!(
-                    "已连接到进程 {}，可开始读取歌词。日志：{}",
-                    session.process_id,
-                    session.log_directory.display()
-                );
-                self.log_directory = Some(session.log_directory.clone());
+                self.detail = format!("已连接到进程 {}，可开始读取歌词。", session.process_id);
                 self.session = Some(session.clone());
                 Task::run(event_stream(session.event_receiver), Message::HookEvent)
             }
@@ -281,16 +276,6 @@ impl App {
                 self.playback = None;
                 Task::none()
             }
-            Message::OpenLogs => {
-                if let Some(directory) = &self.log_directory
-                    && let Err(error) = std::process::Command::new("explorer.exe")
-                        .arg(directory)
-                        .spawn()
-                {
-                    self.detail = format!("无法打开日志目录：{error}");
-                }
-                Task::none()
-            }
             Message::ShowLyricsWindow => {
                 if let Some(window) = self.lyrics_window {
                     window::gain_focus(window)
@@ -312,6 +297,13 @@ impl App {
                     self.lyrics_appearance.text = color;
                 }
                 self.lyrics_appearance.text_input = input;
+                Task::none()
+            }
+            Message::HighlightColorChanged(input) => {
+                if let Some(color) = parse_hex_color(&input) {
+                    self.lyrics_appearance.highlight = color;
+                }
+                self.lyrics_appearance.highlight_input = input;
                 Task::none()
             }
             Message::LyricsFontChanged(font) => {
@@ -387,24 +379,18 @@ impl App {
         match event {
             HookEvent::CaptureStarted => {
                 self.connection = ConnectionState::Streaming;
-                self.detail = "歌词语义 hook 已启用。".into();
+                self.detail = "歌词同步已就绪。".into();
             }
             HookEvent::CaptureStopped => {
                 self.connection = ConnectionState::Connected;
                 self.detail = "歌词读取已停止。".into();
             }
             HookEvent::Timeline(timeline) => {
-                self.semantic_events += 1;
-                self.detail = format!(
-                    "收到 {:?} 歌词时间轴，共 {} 行。",
-                    timeline.source,
-                    timeline.lines.len()
-                );
+                self.detail = "歌词同步中。".into();
                 self.playback = None;
                 self.timeline = Some(timeline);
             }
             HookEvent::Playback(playback) => {
-                self.semantic_events += 1;
                 if self
                     .timeline
                     .as_ref()
@@ -463,8 +449,6 @@ impl App {
             )
             .then_some(Message::Disconnect),
         );
-        let open_logs = button("打开日志目录")
-            .on_press_maybe(self.log_directory.is_some().then_some(Message::OpenLogs));
         let lyrics_window = button(if self.lyrics_window.is_some() {
             "显示歌词窗口"
         } else {
@@ -477,8 +461,12 @@ impl App {
         let text_color = text_input("#RRGGBB", &self.lyrics_appearance.text_input)
             .on_input(Message::TextColorChanged)
             .width(150);
+        let highlight_color = text_input("#RRGGBB", &self.lyrics_appearance.highlight_input)
+            .on_input(Message::HighlightColorChanged)
+            .width(150);
         let background_preview = color_swatch(self.lyrics_appearance.background);
         let text_preview = color_swatch(self.lyrics_appearance.text);
+        let highlight_preview = color_swatch(self.lyrics_appearance.highlight);
         let font = pick_list(
             self.available_fonts.as_slice(),
             Some(self.lyrics_appearance.font),
@@ -506,26 +494,16 @@ impl App {
         .step(1.0_f32)
         .width(Fill);
         let colors_valid = parse_hex_color(&self.lyrics_appearance.background_input).is_some()
-            && parse_hex_color(&self.lyrics_appearance.text_input).is_some();
+            && parse_hex_color(&self.lyrics_appearance.text_input).is_some()
+            && parse_hex_color(&self.lyrics_appearance.highlight_input).is_some();
 
         let content = column![
             text("KG Capture").size(32),
-            row![
-                text(format!("状态：{status}")),
-                text(format!("语义事件：{}", self.semantic_events)),
-            ]
-            .spacing(24),
+            text(format!("状态：{status}")),
             text(&self.detail),
-            text(
-                self.log_directory
-                    .as_ref()
-                    .map(|path| format!("诊断日志：{}", path.display()))
-                    .unwrap_or_else(|| "诊断日志将在启动目标后创建。".into())
-            )
-            .size(13),
             row![executable, browse].spacing(8),
             row![launch, start, stop, disconnect].spacing(12),
-            row![lyrics_window, open_logs].spacing(12),
+            lyrics_window,
             text("歌词窗口样式").size(20),
             row![
                 text("背景色").width(72),
@@ -537,6 +515,9 @@ impl App {
             ]
             .spacing(10)
             .align_y(iced::Center),
+            row![text("高亮色").width(72), highlight_color, highlight_preview,]
+                .spacing(10)
+                .align_y(iced::Center),
             row![
                 text("字体").width(72),
                 font,
@@ -705,7 +686,11 @@ fn current_line_view<'a>(
             .size(appearance.active_font_size)
             .width(Fill)
             .align_x(appearance.alignment.horizontal())
-            .color(progress_color(appearance.text, line_progress))
+            .color(progress_color(
+                appearance.text,
+                appearance.highlight,
+                line_progress,
+            ))
             .into();
     }
 
@@ -722,7 +707,11 @@ fn current_line_view<'a>(
             text(&word.text)
                 .font(appearance.font.font())
                 .size(appearance.active_font_size)
-                .color(progress_color(appearance.text, progress)),
+                .color(progress_color(
+                    appearance.text,
+                    appearance.highlight,
+                    progress,
+                )),
         );
     }
     container(words.wrap())
@@ -731,9 +720,15 @@ fn current_line_view<'a>(
         .into()
 }
 
-fn progress_color(color: Color, progress: f32) -> Color {
+fn progress_color(text: Color, highlight: Color, progress: f32) -> Color {
     let progress = progress.clamp(0.0, 1.0);
-    dim_color(color, 0.68 + 0.32 * progress)
+    let text = dim_color(text, 0.68);
+    Color {
+        r: text.r + (highlight.r - text.r) * progress,
+        g: text.g + (highlight.g - text.g) * progress,
+        b: text.b + (highlight.b - text.b) * progress,
+        a: text.a + (highlight.a - text.a) * progress,
+    }
 }
 
 fn parse_hex_color(input: &str) -> Option<Color> {

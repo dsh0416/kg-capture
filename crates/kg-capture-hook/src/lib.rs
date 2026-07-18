@@ -38,6 +38,27 @@ const MAX_LINES: usize = 2_000;
 const MAX_WORDS_PER_LINE: usize = 256;
 const MAX_WORD_UTF16: usize = 1_024;
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum LogLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Off,
+}
+
+impl LogLevel {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Debug => "DEBUG",
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Error => "ERROR",
+            Self::Off => "OFF",
+        }
+    }
+}
+
 static STANDARD_UPDATE: OnceLock<GenericDetour<RenderUpdateFn>> = OnceLock::new();
 static LIVE_UPDATE: OnceLock<GenericDetour<RenderUpdateFn>> = OnceLock::new();
 static EVENT_QUEUE: OnceLock<SyncSender<HookEvent>> = OnceLock::new();
@@ -81,7 +102,7 @@ pub unsafe extern "system" fn kg_capture_start(parameter: *mut c_void) -> u32 {
         initialize_log(path);
     }
     hook_log(
-        "INFO",
+        LogLevel::Info,
         format_args!(
             "kg_capture_start pid={} protocol={} expected={} bootstrap_size={}",
             std::process::id(),
@@ -91,13 +112,16 @@ pub unsafe extern "system" fn kg_capture_start(parameter: *mut c_void) -> u32 {
         ),
     );
     if bootstrap.protocol_version != PROTOCOL_VERSION {
-        hook_log("ERROR", format_args!("protocol mismatch"));
+        hook_log(LogLevel::Error, format_args!("protocol mismatch"));
         return 2;
     }
     let endpoint = match bootstrap.endpoint() {
         Ok(value) => value.to_owned(),
         Err(error) => {
-            hook_log("ERROR", format_args!("invalid IPC endpoint: {error}"));
+            hook_log(
+                LogLevel::Error,
+                format_args!("invalid IPC endpoint: {error}"),
+            );
             return 3;
         }
     };
@@ -108,7 +132,7 @@ pub unsafe extern "system" fn kg_capture_start(parameter: *mut c_void) -> u32 {
     {
         Ok(_) => 0,
         Err(error) => {
-            hook_log("ERROR", format_args!("start hook thread: {error}"));
+            hook_log(LogLevel::Error, format_args!("start hook thread: {error}"));
             4
         }
     }
@@ -126,13 +150,16 @@ pub extern "system" fn kg_capture_fixture_emit(position_ms: u32) -> u32 {
 
 fn run_hook(endpoint: String, nonce: kg_capture_protocol::SessionNonce) {
     hook_log(
-        "INFO",
+        LogLevel::Debug,
         format_args!("connecting IPC endpoint_len={}", endpoint.len()),
     );
     let bootstrap = match IpcSender::<HookHandshake>::connect(endpoint) {
         Ok(sender) => sender,
         Err(error) => {
-            hook_log("ERROR", format_args!("connect bootstrap IPC: {error}"));
+            hook_log(
+                LogLevel::Error,
+                format_args!("connect bootstrap IPC: {error}"),
+            );
             return;
         }
     };
@@ -176,12 +203,12 @@ fn run_hook(endpoint: String, nonce: kg_capture_protocol::SessionNonce) {
         event_receiver,
     };
     if bootstrap.send(handshake).is_err() {
-        hook_log("ERROR", format_args!("send IPC handshake failed"));
+        hook_log(LogLevel::Error, format_args!("send IPC handshake failed"));
         return;
     }
-    hook_log("INFO", format_args!("IPC handshake sent"));
+    hook_log(LogLevel::Info, format_args!("IPC handshake sent"));
     command_loop(command_receiver, event_sender);
-    hook_log("INFO", format_args!("command loop stopped"));
+    hook_log(LogLevel::Info, format_args!("command loop stopped"));
 }
 
 fn command_loop(
@@ -193,19 +220,19 @@ fn command_loop(
             HostCommand::StartCapture => match install_hooks() {
                 Ok(warning) => {
                     HOOKS_ACTIVE.store(true, Ordering::Release);
-                    hook_log("INFO", format_args!("semantic capture started"));
+                    hook_log(LogLevel::Info, format_args!("semantic capture started"));
                     if let Some(warning) = warning {
                         let _ = sender.send(HookEvent::Warning(warning));
                     }
                     let _ = sender.send(HookEvent::CaptureStarted);
                 }
                 Err(error) => {
-                    hook_log("ERROR", format_args!("install hooks: {error}"));
+                    hook_log(LogLevel::Error, format_args!("install hooks: {error}"));
                     let _ = sender.send(HookEvent::Error(error));
                 }
             },
             HostCommand::StopCapture => {
-                hook_log("INFO", format_args!("stop requested"));
+                hook_log(LogLevel::Info, format_args!("stop requested"));
                 HOOKS_ACTIVE.store(false, Ordering::Release);
                 disable_hooks();
                 let _ = sender.send(HookEvent::CaptureStopped);
@@ -214,7 +241,7 @@ fn command_loop(
                 let _ = sender.send(HookEvent::Pong { sequence });
             }
             HostCommand::Shutdown => {
-                hook_log("INFO", format_args!("shutdown requested"));
+                hook_log(LogLevel::Info, format_args!("shutdown requested"));
                 HOOKS_ACTIVE.store(false, Ordering::Release);
                 disable_hooks();
                 break;
@@ -227,12 +254,12 @@ fn command_loop(
 
 fn install_hooks() -> Result<Option<String>, String> {
     if std::env::var_os("KG_CAPTURE_FIXTURE").is_some() {
-        hook_log("INFO", format_args!("fixture mode selected"));
+        hook_log(LogLevel::Info, format_args!("fixture mode selected"));
         FIXTURE_TIMELINE_SENT.store(false, Ordering::Release);
         return Ok(Some("semantic fixture mode".into()));
     }
 
-    hook_log("INFO", format_args!("waiting for KSongsUI.dll"));
+    hook_log(LogLevel::Info, format_args!("waiting for KSongsUI.dll"));
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
     let module = loop {
         if let Ok(module) = unsafe { GetModuleHandleW(windows::core::w!("KSongsUI.dll")) } {
@@ -248,12 +275,12 @@ fn install_hooks() -> Result<Option<String>, String> {
     };
 
     hook_log(
-        "INFO",
+        LogLevel::Debug,
         format_args!("KSongsUI.dll base=0x{:08x}", module.0 as usize),
     );
     let image = unsafe { PeImage::from_module(module.0 as usize) }?;
     hook_log(
-        "INFO",
+        LogLevel::Debug,
         format_args!(
             "PE image size=0x{:x} sections={}",
             image.size,
@@ -264,7 +291,7 @@ fn install_hooks() -> Result<Option<String>, String> {
     let standard = unsafe { image.find_virtual_method(STANDARD_RTTI, 4) }?;
     let live = unsafe { image.find_virtual_method(LIVE_RTTI, 4) }?;
     hook_log(
-        "INFO",
+        LogLevel::Debug,
         format_args!("lyric update targets standard=0x{standard:08x} live=0x{live:08x}"),
     );
     unsafe {
@@ -302,7 +329,7 @@ fn install_hooks() -> Result<Option<String>, String> {
         {
             unsafe { detour.enable() }
                 .map_err(|error| format!("enable {name} lyric detour: {error}"))?;
-            hook_log("INFO", format_args!("{name} lyric detour enabled"));
+            hook_log(LogLevel::Info, format_args!("{name} lyric detour enabled"));
         }
     }
     Ok(None)
@@ -372,7 +399,7 @@ fn capture_render_state(
             let failures = SNAPSHOT_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
             if failures <= 5 || failures.is_multiple_of(1_000) {
                 hook_log(
-                    "WARN",
+                    LogLevel::Warn,
                     format_args!(
                         "snapshot read failed count={failures} source={source:?} object=0x{:08x}",
                         object as usize
@@ -385,7 +412,7 @@ fn capture_render_state(
         let identity = (source, snapshot.lines_begin, snapshot.lines_end);
         if state.identity != Some(identity) {
             hook_log(
-                "INFO",
+                LogLevel::Debug,
                 format_args!(
                     "timeline identity changed source={source:?} begin=0x{:08x} end=0x{:08x} entries={}",
                     snapshot.lines_begin,
@@ -400,12 +427,15 @@ fn capture_render_state(
                 state.identity = Some(identity);
                 state.timeline_id = id;
                 hook_log(
-                    "INFO",
+                    LogLevel::Info,
                     format_args!("timeline extracted id={id} lines={}", lines.len()),
                 );
                 queue(HookEvent::Timeline(LyricTimeline { id, source, lines }));
             } else {
-                hook_log("WARN", format_args!("timeline extraction returned no lines"));
+                hook_log(
+                    LogLevel::Warn,
+                    format_args!("timeline extraction returned no lines"),
+                );
             }
         }
         if state.timeline_id == 0 {
@@ -483,7 +513,7 @@ fn queue(event: HookEvent) {
         let failures = QUEUE_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
         if failures <= 5 || failures.is_multiple_of(1_000) {
             hook_log(
-                "WARN",
+                LogLevel::Warn,
                 format_args!("event queue send failed count={failures}: {error}"),
             );
         }
@@ -494,7 +524,7 @@ fn log_callback(name: &str, counter: &AtomicU64, object: *mut c_void, position: 
     let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
     if count <= 3 || count.is_multiple_of(1_000) {
         hook_log(
-            "INFO",
+            LogLevel::Debug,
             format_args!(
                 "{name} callback count={count} object=0x{:08x} position={position}",
                 object as usize
@@ -513,7 +543,10 @@ fn initialize_log(path: &str) {
     }
 }
 
-fn hook_log(level: &str, arguments: std::fmt::Arguments<'_>) {
+fn hook_log(level: LogLevel, arguments: std::fmt::Arguments<'_>) {
+    if level < configured_log_level() {
+        return;
+    }
     let Some(file) = LOG_FILE.get() else {
         return;
     };
@@ -526,11 +559,42 @@ fn hook_log(level: &str, arguments: std::fmt::Arguments<'_>) {
         .unwrap_or(0);
     let _ = writeln!(
         file,
-        "{timestamp} {level} pid={} tid={:?} {arguments}",
+        "{timestamp} {} pid={} tid={:?} {arguments}",
+        level.label(),
         std::process::id(),
         thread::current().id()
     );
     let _ = file.flush();
+}
+
+fn configured_log_level() -> LogLevel {
+    static LEVEL: OnceLock<LogLevel> = OnceLock::new();
+    *LEVEL.get_or_init(|| minimum_log_level(std::env::var("RUST_LOG").ok().as_deref()))
+}
+
+fn minimum_log_level(filter: Option<&str>) -> LogLevel {
+    let mut global = None;
+    let mut package = None;
+    for directive in filter.into_iter().flat_map(|value| value.split(',')) {
+        let directive = directive.trim();
+        let (target, level) = directive
+            .rsplit_once('=')
+            .map_or((None, directive), |(target, level)| (Some(target), level));
+        let level = match level.trim().to_ascii_lowercase().as_str() {
+            "trace" | "debug" => LogLevel::Debug,
+            "info" => LogLevel::Info,
+            "warn" => LogLevel::Warn,
+            "error" => LogLevel::Error,
+            "off" => LogLevel::Off,
+            _ => continue,
+        };
+        match target {
+            Some(target) if target.trim().starts_with("kg_capture") => package = Some(level),
+            None => global = Some(level),
+            _ => {}
+        }
+    }
+    package.or(global).unwrap_or(LogLevel::Info)
 }
 
 fn timestamp_micros() -> u64 {
@@ -630,7 +694,7 @@ unsafe fn read_timeline(begin: usize, end: usize) -> Option<Vec<LyricLine>> {
         }
     }
     hook_log(
-        "INFO",
+        LogLevel::Debug,
         format_args!(
             "timeline memory parsed entries={count} accepted={} rejected={rejected}",
             lines.len()
@@ -870,7 +934,7 @@ impl PeImage {
             .checked_sub(8)
             .ok_or_else(|| "invalid RTTI type descriptor".to_owned())?;
         hook_log(
-            "INFO",
+            LogLevel::Debug,
             format_args!(
                 "RTTI {} name=0x{name:08x} type_descriptor=0x{type_descriptor:08x}",
                 display_rtti(rtti_name)
@@ -902,7 +966,7 @@ impl PeImage {
             }
         }
         hook_log(
-            "INFO",
+            LogLevel::Debug,
             format_args!(
                 "RTTI {} virtual method candidates={} slot={slot}",
                 display_rtti(rtti_name),
@@ -971,7 +1035,7 @@ impl PeImage {
             let name = String::from_utf8_lossy(&section.name[..name_end]);
             let first_region = readable_prefix(section.address).unwrap_or(0);
             hook_log(
-                "INFO",
+                LogLevel::Debug,
                 format_args!(
                     "PE section {name} address=0x{:08x} length=0x{:x} readable={} executable={} first_region=0x{first_region:x}",
                     section.address, section.length, section.readable, section.executable

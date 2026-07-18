@@ -199,6 +199,7 @@ fn smoke_test_fixture(root: &Path, fixture: &Path, distribution: &Path) -> Resul
     let status = hidden_command(&distribution.join("kg-capture-injector.exe"))
         .env("KG_CAPTURE_FIXTURE", "1")
         .env("KG_CAPTURE_INJECTOR_LOG_FILE", &injector_log)
+        .env("RUST_LOG", "kg_capture=info")
         .args([
             "--launch",
             &fixture.to_string_lossy(),
