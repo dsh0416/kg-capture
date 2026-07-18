@@ -1,0 +1,14 @@
+[package]
+name = "kg-capture-xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+ipc-channel.workspace = true
+kg-capture-protocol = { path = "../kg-capture-protocol" }
