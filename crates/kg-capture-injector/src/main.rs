@@ -422,7 +422,7 @@ unsafe fn call_remote(
     if wait != WAIT_OBJECT_0 {
         return Err(InjectorError::Windows {
             context: "wait for remote thread",
-            source: WindowsError::from_win32(),
+            source: WindowsError::from_thread(),
         });
     }
 
@@ -455,7 +455,7 @@ impl RemoteAllocation {
         if pointer.is_null() {
             return Err(InjectorError::Windows {
                 context: "allocate target memory",
-                source: WindowsError::from_win32(),
+                source: WindowsError::from_thread(),
             });
         }
 
@@ -669,7 +669,7 @@ impl LaunchedProcess {
         if previous_count == u32::MAX {
             return Err(InjectorError::Windows {
                 context: "resume target process",
-                source: WindowsError::from_win32(),
+                source: WindowsError::from_thread(),
             });
         }
         Ok(())
@@ -688,7 +688,7 @@ impl LaunchedProcess {
             if previous_count == u32::MAX {
                 return Err(InjectorError::Windows {
                     context: "suspend target at entry point",
-                    source: WindowsError::from_win32(),
+                    source: WindowsError::from_thread(),
                 });
             }
 
@@ -719,7 +719,7 @@ impl LaunchedProcess {
             if resumed_count == u32::MAX {
                 return Err(InjectorError::Windows {
                     context: "resume target while waiting for entry point",
-                    source: WindowsError::from_win32(),
+                    source: WindowsError::from_thread(),
                 });
             }
             if Instant::now() >= deadline {

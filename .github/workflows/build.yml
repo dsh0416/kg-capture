@@ -12,6 +12,10 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: read
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
 
     steps:
       - name: Checkout code
@@ -22,6 +26,15 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc,i686-pc-windows-msvc
           components: rustfmt,clippy
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          cache-bin: false
 
       - name: Test, build, and verify
         run: |
