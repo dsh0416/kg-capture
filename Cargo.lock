@@ -1815,7 +1815,7 @@ dependencies = [
 
 [[package]]
 name = "kg-capture-app"
-version = "0.0.5"
+version = "0.2.0"
 dependencies = [
  "getrandom 0.4.3",
  "iced",
@@ -1830,14 +1830,14 @@ dependencies = [
 
 [[package]]
 name = "kg-capture-fixture"
-version = "0.0.5"
+version = "0.2.0"
 dependencies = [
  "windows 0.62.2",
 ]
 
 [[package]]
 name = "kg-capture-hook"
-version = "0.0.5"
+version = "0.2.0"
 dependencies = [
  "ipc-channel",
  "kg-capture-protocol",
@@ -1848,7 +1848,7 @@ dependencies = [
 
 [[package]]
 name = "kg-capture-injector"
-version = "0.0.5"
+version = "0.2.0"
 dependencies = [
  "kg-capture-protocol",
  "thiserror 2.0.18",
@@ -1857,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "kg-capture-protocol"
-version = "0.0.5"
+version = "0.2.0"
 dependencies = [
  "ipc-channel",
  "serde",
@@ -1865,7 +1865,7 @@ dependencies = [
 
 [[package]]
 name = "kg-capture-xtask"
-version = "0.0.5"
+version = "0.2.0"
 dependencies = [
  "ipc-channel",
  "kg-capture-protocol",
