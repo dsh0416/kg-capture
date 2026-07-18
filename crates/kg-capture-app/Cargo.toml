@@ -1,0 +1,25 @@
+[package]
+name = "kg-capture-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+default-run = "kg-capture"
+
+[[bin]]
+name = "kg-capture"
+path = "src/main.rs"
+
+[dependencies]
+getrandom.workspace = true
+iced.workspace = true
+ipc-channel.workspace = true
+kg-capture-protocol = { path = "../kg-capture-protocol" }
+rfd.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dependencies.windows]
+workspace = true
+features = ["Win32_Globalization", "Win32_Graphics_DirectWrite"]

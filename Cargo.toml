@@ -1,24 +1,33 @@
-[package]
-name = "kg-capture"
+[workspace]
+members = [
+    "crates/kg-capture-app",
+    "crates/kg-capture-fixture",
+    "crates/kg-capture-hook",
+    "crates/kg-capture-injector",
+    "crates/kg-capture-protocol",
+    "crates/kg-capture-xtask",
+]
+default-members = [
+    "crates/kg-capture-app",
+    "crates/kg-capture-protocol",
+    "crates/kg-capture-xtask",
+]
+resolver = "3"
+
+[workspace.package]
 version = "0.0.5"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/dsh0416/kg-capture"
 
-[dependencies]
-
-[dependencies.windows]
-version = "0.61.1"
-features = [
-    "Win32",
-    "Win32_Foundation",
-    "Win32_Graphics",
-    "Win32_Graphics_Gdi",
-    "Win32_Graphics_Direct3D",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_Storage_Xps",
-    "Win32_System_LibraryLoader",
-    "Win32_UI",
-    "Win32_UI_WindowsAndMessaging",
-    "UI",
-]
+[workspace.dependencies]
+getrandom = "0.3"
+iced = { version = "=0.14.0", features = ["image"] }
+ipc-channel = "=0.22.0"
+retour = { version = "=0.4.0-alpha.4", default-features = false }
+rfd = { version = "=0.17.2", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+windows = "0.61.1"
