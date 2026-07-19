@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use connection::Session;
 use iced::futures::SinkExt;
-use iced::widget::{button, column, container, pick_list, row, slider, text, text_input};
+use iced::widget::{button, checkbox, column, container, pick_list, row, slider, text, text_input};
 use iced::{Color, Element, Fill, Font, Point, Size, Subscription, Task, Theme, window};
 use ipc_channel::ipc::IpcReceiver;
 use kg_capture_protocol::{HookEvent, HostCommand, LyricLine, LyricTimeline, PlaybackPosition};
@@ -42,6 +42,8 @@ enum Message {
     LyricsAlignmentChanged(LyricsAlignment),
     ActiveFontSizeChanged(f32),
     CandidateFontSizeChanged(f32),
+    ShowPreviousLineChanged(bool),
+    CandidateLineCountChanged(f32),
     WindowCloseRequested(window::Id),
 }
 
@@ -149,6 +151,8 @@ struct LyricsAppearance {
     alignment: LyricsAlignment,
     active_font_size: f32,
     candidate_font_size: f32,
+    show_previous_line: bool,
+    candidate_line_count: usize,
 }
 
 impl Default for LyricsAppearance {
@@ -164,6 +168,8 @@ impl Default for LyricsAppearance {
             alignment: LyricsAlignment::Center,
             active_font_size: 38.0,
             candidate_font_size: 24.0,
+            show_previous_line: true,
+            candidate_line_count: 3,
         }
     }
 }
@@ -189,8 +195,8 @@ impl App {
             ..LyricsAppearance::default()
         };
         let (control_window, open_control_window) = window::open(window::Settings {
-            size: Size::new(720.0, 620.0),
-            min_size: Some(Size::new(640.0, 560.0)),
+            size: Size::new(720.0, 680.0),
+            min_size: Some(Size::new(640.0, 620.0)),
             position: window::Position::Specific(Point::new(40.0, 40.0)),
             exit_on_close_request: false,
             ..window::Settings::default()
@@ -317,6 +323,14 @@ impl App {
             }
             Message::CandidateFontSizeChanged(size) => {
                 self.lyrics_appearance.candidate_font_size = size.clamp(12.0, 72.0);
+                Task::none()
+            }
+            Message::ShowPreviousLineChanged(show) => {
+                self.lyrics_appearance.show_previous_line = show;
+                Task::none()
+            }
+            Message::CandidateLineCountChanged(count) => {
+                self.lyrics_appearance.candidate_line_count = count.clamp(0.0, 10.0) as usize;
                 Task::none()
             }
             Message::WindowCloseRequested(window) if window == self.control_window => {
@@ -484,6 +498,16 @@ impl App {
         )
         .step(1.0_f32)
         .width(Fill);
+        let show_previous_line = checkbox(self.lyrics_appearance.show_previous_line)
+            .label("显示上一句歌词")
+            .on_toggle(Message::ShowPreviousLineChanged);
+        let candidate_line_count = slider(
+            0.0..=10.0,
+            self.lyrics_appearance.candidate_line_count as f32,
+            Message::CandidateLineCountChanged,
+        )
+        .step(1.0_f32)
+        .width(Fill);
         let colors_valid = parse_hex_color(&self.lyrics_appearance.background_input).is_some()
             && parse_hex_color(&self.lyrics_appearance.text_input).is_some()
             && parse_hex_color(&self.lyrics_appearance.highlight_input).is_some();
@@ -530,6 +554,18 @@ impl App {
                 text(format!(
                     "{:.0} px",
                     self.lyrics_appearance.candidate_font_size
+                ))
+                .width(58),
+            ]
+            .spacing(10)
+            .align_y(iced::Center),
+            row![
+                show_previous_line,
+                text("候选条目数").width(92),
+                candidate_line_count,
+                text(format!(
+                    "{} 条",
+                    self.lyrics_appearance.candidate_line_count
                 ))
                 .width(58),
             ]
@@ -611,7 +647,7 @@ fn lyric_view<'a>(
     let mut body = column![].spacing(14).width(Fill);
 
     if let Some(index) = current_index {
-        if index > 0 {
+        if appearance.show_previous_line && index > 0 {
             body = body.push(
                 text(&timeline.lines[index - 1].text)
                     .font(appearance.font.font())
@@ -627,7 +663,12 @@ fn lyric_view<'a>(
             progress,
             appearance,
         ));
-        for line in timeline.lines.iter().skip(index + 1).take(3) {
+        for line in timeline
+            .lines
+            .iter()
+            .skip(index + 1)
+            .take(appearance.candidate_line_count)
+        {
             body = body.push(
                 text(&line.text)
                     .font(appearance.font.font())
@@ -646,7 +687,7 @@ fn lyric_view<'a>(
                 .align_x(appearance.alignment.horizontal())
                 .color(appearance.text),
         );
-        for line in timeline.lines.iter().take(3) {
+        for line in timeline.lines.iter().take(appearance.candidate_line_count) {
             body = body.push(
                 text(&line.text)
                     .font(appearance.font.font())
