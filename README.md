@@ -38,9 +38,9 @@ The iced process performs all text layout and highlighting, so rendering follows
 
 iced 进程负责全部文本布局和高亮，因此渲染遵循自身的逻辑像素缩放，而不受全民 K 歌 GDI/GDI+ DPI 行为的影响。
 
-The host uses separate windows: `KG Capture` contains connection, diagnostic, and lyric appearance controls, while `KG Lyrics` contains only the lyric presentation intended for OBS capture. The control window can adjust the lyric background color, text color, playback highlight color, active-line font size, candidate-line font size, and left/center/right alignment in real time. Its font list is populated at startup from the installed Windows font families through DirectWrite and uses localized display names from the preferred Windows UI languages. The lyric window can be closed independently and reopened from the control window.
+The host uses separate windows: `KG Capture` contains connection, diagnostic, and lyric appearance controls, while `KG Lyrics` contains only the lyric presentation intended for OBS capture. The control window can adjust the lyric background color, text color, playback highlight color, active-line font size, candidate-line font size, previous-line visibility, candidate-line count, and left/center/right alignment in real time. Its font list is populated at startup from the installed Windows font families through DirectWrite and uses localized display names from the preferred Windows UI languages. The lyric window can be closed independently and reopened from the control window.
 
-宿主程序使用两个独立窗口：`KG Capture` 提供连接、诊断和歌词外观控制，`KG Lyrics` 仅显示供 OBS 采集的歌词。控制窗口可实时调整歌词背景色、文字颜色、播放高亮颜色、活动行字号、候选行字号以及左对齐、居中或右对齐。程序启动时通过 DirectWrite 读取已安装的 Windows 字体系列，并按照首选 Windows UI 语言显示本地化字体名称。歌词窗口可以独立关闭，并可从控制窗口重新打开。
+宿主程序使用两个独立窗口：`KG Capture` 提供连接、诊断和歌词外观控制，`KG Lyrics` 仅显示供 OBS 采集的歌词。控制窗口可实时调整歌词背景色、文字颜色、播放高亮颜色、活动行字号、候选行字号、是否显示上一句、候选歌词条目数以及左对齐、居中或右对齐。程序启动时通过 DirectWrite 读取已安装的 Windows 字体系列，并按照首选 Windows UI 语言显示本地化字体名称。歌词窗口可以独立关闭，并可从控制窗口重新打开。
 
 ## Build / 构建
 
