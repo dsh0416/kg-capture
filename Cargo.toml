@@ -28,6 +28,7 @@ retour = { version = "=0.4.0-alpha.4", default-features = false }
 rfd = { version = "=0.17.2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
+toml_edit = "0.25.13"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 windows = "0.62.2"

@@ -17,6 +17,7 @@ ipc-channel.workspace = true
 kg-capture-protocol = { path = "../kg-capture-protocol" }
 rfd.workspace = true
 thiserror.workspace = true
+toml_edit.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
@@ -26,5 +27,6 @@ features = [
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_DirectWrite",
+    "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
 ]

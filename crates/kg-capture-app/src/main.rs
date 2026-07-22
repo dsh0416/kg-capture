@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod connection;
+mod settings;
 mod system_fonts;
 
 use std::sync::{Arc, Mutex};
@@ -46,6 +47,7 @@ enum Message {
     CandidateFontSizeChanged(f32),
     ShowPreviousLineChanged(bool),
     CandidateLineCountChanged(f32),
+    SaveSettings,
     WindowCloseRequested(window::Id),
 }
 
@@ -114,6 +116,26 @@ impl std::fmt::Display for LyricsAlignment {
     }
 }
 
+impl From<settings::AlignmentSetting> for LyricsAlignment {
+    fn from(value: settings::AlignmentSetting) -> Self {
+        match value {
+            settings::AlignmentSetting::Left => Self::Left,
+            settings::AlignmentSetting::Center => Self::Center,
+            settings::AlignmentSetting::Right => Self::Right,
+        }
+    }
+}
+
+impl From<LyricsAlignment> for settings::AlignmentSetting {
+    fn from(value: LyricsAlignment) -> Self {
+        match value {
+            LyricsAlignment::Left => Self::Left,
+            LyricsAlignment::Center => Self::Center,
+            LyricsAlignment::Right => Self::Right,
+        }
+    }
+}
+
 fn available_lyrics_fonts() -> Vec<LyricsFont> {
     let mut fonts = vec![LyricsFont::System];
     match system_fonts::families() {
@@ -150,6 +172,7 @@ struct LyricsAppearance {
     highlight_input: String,
     highlight: Color,
     font: LyricsFont,
+    font_setting: settings::FontSetting,
     alignment: LyricsAlignment,
     active_font_size: f32,
     candidate_font_size: f32,
@@ -167,11 +190,74 @@ impl Default for LyricsAppearance {
             highlight_input: "#FFD54F".into(),
             highlight: Color::from_rgb8(0xff, 0xd5, 0x4f),
             font: LyricsFont::System,
+            font_setting: settings::FontSetting::Preferred,
             alignment: LyricsAlignment::Center,
             active_font_size: 38.0,
             candidate_font_size: 24.0,
             show_previous_line: true,
             candidate_line_count: 3,
+        }
+    }
+}
+
+impl LyricsAppearance {
+    fn from_settings(value: settings::LyricsSettings, fonts: &[LyricsFont]) -> Self {
+        let defaults = Self::default();
+        let (background_input, background) = validated_color(
+            value.background,
+            defaults.background_input,
+            defaults.background,
+        );
+        let (text_input, text) =
+            validated_color(value.text, defaults.text_input, defaults.text);
+        let (highlight_input, highlight) = validated_color(
+            value.highlight,
+            defaults.highlight_input,
+            defaults.highlight,
+        );
+        let font = match &value.font {
+            settings::FontSetting::Preferred => preferred_lyrics_font(fonts),
+            settings::FontSetting::System => LyricsFont::System,
+            settings::FontSetting::Named(name) => fonts
+                .iter()
+                .copied()
+                .find(|font| {
+                    matches!(
+                        font,
+                        LyricsFont::Named { family_name, .. } if *family_name == name.as_str()
+                    )
+                })
+                .unwrap_or(LyricsFont::System),
+        };
+
+        Self {
+            background_input,
+            background,
+            text_input,
+            text,
+            highlight_input,
+            highlight,
+            font,
+            font_setting: value.font,
+            alignment: value.alignment.into(),
+            active_font_size: value.active_font_size.clamp(20.0, 96.0),
+            candidate_font_size: value.candidate_font_size.clamp(12.0, 72.0),
+            show_previous_line: value.show_previous_line,
+            candidate_line_count: value.candidate_line_count.min(10),
+        }
+    }
+
+    fn settings(&self) -> settings::LyricsSettings {
+        settings::LyricsSettings {
+            background: self.background_input.clone(),
+            text: self.text_input.clone(),
+            highlight: self.highlight_input.clone(),
+            font: self.font_setting.clone(),
+            alignment: self.alignment.into(),
+            active_font_size: self.active_font_size,
+            candidate_font_size: self.candidate_font_size,
+            show_previous_line: self.show_previous_line,
+            candidate_line_count: self.candidate_line_count,
         }
     }
 }
@@ -187,15 +273,22 @@ struct App {
     executable_path: String,
     available_fonts: Vec<LyricsFont>,
     lyrics_appearance: LyricsAppearance,
+    settings_save_enabled: bool,
 }
 
 impl App {
     fn new() -> (Self, Task<Message>) {
         let available_fonts = available_lyrics_fonts();
-        let lyrics_appearance = LyricsAppearance {
-            font: preferred_lyrics_font(&available_fonts),
-            ..LyricsAppearance::default()
+        let (saved_settings, settings_save_enabled, settings_warning) = match settings::load() {
+            Ok(Some(saved_settings)) => (saved_settings, true, None),
+            Ok(None) => (settings::Settings::default(), true, None),
+            Err(error) => {
+                tracing::warn!(%error, "failed to load settings");
+                (settings::Settings::default(), false, Some(error.to_string()))
+            }
         };
+        let lyrics_appearance =
+            LyricsAppearance::from_settings(saved_settings.lyrics, &available_fonts);
         let (control_window, open_control_window) = window::open(window::Settings {
             size: Size::new(720.0, 680.0),
             min_size: Some(Size::new(640.0, 620.0)),
@@ -210,13 +303,16 @@ impl App {
                 control_window,
                 lyrics_window: Some(lyrics_window),
                 connection: ConnectionState::Disconnected,
-                detail: "选择 WeSing.exe；程序将以子进程方式启动并读取歌词。".into(),
+                detail: settings_warning.unwrap_or_else(|| {
+                    "选择 WeSing.exe；程序将以子进程方式启动并读取歌词。".into()
+                }),
                 session: None,
                 timeline: None,
                 playback: None,
-                executable_path: String::new(),
+                executable_path: saved_settings.executable_path,
                 available_fonts,
                 lyrics_appearance,
+                settings_save_enabled,
             },
             Task::batch([open_control_window.discard(), open_lyrics_task.discard()]),
         )
@@ -237,6 +333,7 @@ impl App {
                 if let Some(path) = path {
                     self.executable_path = path.to_string_lossy().into_owned();
                     self.detail = "已选择目标程序，可以启动。".into();
+                    self.save_settings();
                 }
                 Task::none()
             }
@@ -245,6 +342,7 @@ impl App {
                 Task::none()
             }
             Message::Launch => {
+                self.save_settings();
                 self.connection = ConnectionState::Connecting;
                 self.detail = "正在启动 WeSing 并初始化歌词同步…".into();
                 let executable = std::path::PathBuf::from(self.executable_path.clone());
@@ -291,32 +389,58 @@ impl App {
                 }
             }
             Message::BackgroundColorChanged(input) => {
-                if let Some(color) = parse_hex_color(&input) {
+                let is_valid = if let Some(color) = parse_hex_color(&input) {
                     self.lyrics_appearance.background = color;
-                }
+                    true
+                } else {
+                    false
+                };
                 self.lyrics_appearance.background_input = input;
+                if is_valid {
+                    self.save_settings();
+                }
                 Task::none()
             }
             Message::TextColorChanged(input) => {
-                if let Some(color) = parse_hex_color(&input) {
+                let is_valid = if let Some(color) = parse_hex_color(&input) {
                     self.lyrics_appearance.text = color;
-                }
+                    true
+                } else {
+                    false
+                };
                 self.lyrics_appearance.text_input = input;
+                if is_valid {
+                    self.save_settings();
+                }
                 Task::none()
             }
             Message::HighlightColorChanged(input) => {
-                if let Some(color) = parse_hex_color(&input) {
+                let is_valid = if let Some(color) = parse_hex_color(&input) {
                     self.lyrics_appearance.highlight = color;
-                }
+                    true
+                } else {
+                    false
+                };
                 self.lyrics_appearance.highlight_input = input;
+                if is_valid {
+                    self.save_settings();
+                }
                 Task::none()
             }
             Message::LyricsFontChanged(font) => {
                 self.lyrics_appearance.font = font;
+                self.lyrics_appearance.font_setting = match font {
+                    LyricsFont::System => settings::FontSetting::System,
+                    LyricsFont::Named { family_name, .. } => {
+                        settings::FontSetting::Named(family_name.into())
+                    }
+                };
+                self.save_settings();
                 Task::none()
             }
             Message::LyricsAlignmentChanged(alignment) => {
                 self.lyrics_appearance.alignment = alignment;
+                self.save_settings();
                 Task::none()
             }
             Message::ActiveFontSizeChanged(size) => {
@@ -329,13 +453,20 @@ impl App {
             }
             Message::ShowPreviousLineChanged(show) => {
                 self.lyrics_appearance.show_previous_line = show;
+                self.save_settings();
                 Task::none()
             }
             Message::CandidateLineCountChanged(count) => {
                 self.lyrics_appearance.candidate_line_count = count.clamp(0.0, 10.0) as usize;
+                self.save_settings();
+                Task::none()
+            }
+            Message::SaveSettings => {
+                self.save_settings();
                 Task::none()
             }
             Message::WindowCloseRequested(window) if window == self.control_window => {
+                self.save_settings();
                 if let Some(session) = &self.session {
                     let _ = session.send(HostCommand::Shutdown);
                 }
@@ -385,6 +516,21 @@ impl App {
         {
             self.connection = ConnectionState::Failed;
             self.detail = error;
+        }
+    }
+
+    fn save_settings(&mut self) {
+        if !self.settings_save_enabled {
+            return;
+        }
+        let value = settings::Settings {
+            executable_path: self.executable_path.clone(),
+            lyrics: self.lyrics_appearance.settings(),
+            ..settings::Settings::default()
+        };
+        if let Err(error) = settings::save(&value) {
+            tracing::warn!(%error, "failed to save settings");
+            self.detail = error.to_string();
         }
     }
 
@@ -442,6 +588,7 @@ impl App {
 
         let executable = text_input("WeSing.exe 路径", &self.executable_path)
             .on_input(Message::ExecutablePathChanged)
+            .on_submit(Message::SaveSettings)
             .width(Fill);
         let browse = button("浏览…").on_press(Message::BrowseExecutable);
         let can_launch = matches!(
@@ -492,6 +639,7 @@ impl App {
             Message::ActiveFontSizeChanged,
         )
         .step(1.0_f32)
+        .on_release(Message::SaveSettings)
         .width(Fill);
         let candidate_font_size = slider(
             12.0..=72.0,
@@ -499,6 +647,7 @@ impl App {
             Message::CandidateFontSizeChanged,
         )
         .step(1.0_f32)
+        .on_release(Message::SaveSettings)
         .width(Fill);
         let show_previous_line = checkbox(self.lyrics_appearance.show_previous_line)
             .label("显示上一句歌词")
@@ -762,6 +911,13 @@ fn progress_color(text: Color, highlight: Color, progress: f32) -> Color {
         g: text.g + (highlight.g - text.g) * progress,
         b: text.b + (highlight.b - text.b) * progress,
         a: text.a + (highlight.a - text.a) * progress,
+    }
+}
+
+fn validated_color(input: String, default_input: String, default: Color) -> (String, Color) {
+    match parse_hex_color(&input) {
+        Some(color) => (input, color),
+        None => (default_input, default),
     }
 }
 

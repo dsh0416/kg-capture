@@ -42,6 +42,10 @@ The host uses separate windows: `KG Capture` contains connection, diagnostic, an
 
 宿主程序使用两个独立窗口：`KG Capture` 提供连接、诊断和歌词外观控制，`KG Lyrics` 仅显示供 OBS 采集的歌词。控制窗口可实时调整歌词背景色、文字颜色、播放高亮颜色、活动行字号、候选行字号、是否显示上一句、候选歌词条目数以及左对齐、居中或右对齐。程序启动时通过 DirectWrite 读取已安装的 Windows 字体系列，并按照首选 Windows UI 语言显示本地化字体名称。歌词窗口可以独立关闭，并可从控制窗口重新打开。
 
+The selected WeSing executable and lyric appearance are persisted as TOML in `%LOCALAPPDATA%\kg-capture\settings.toml`. The versioned settings format supplies defaults for fields added by later releases. An older application will refuse to overwrite a settings file written by a newer schema version. Existing `settings.conf` files are read once and migrated on the next save.
+
+所选的全民 K 歌程序路径和歌词外观会以 TOML 格式持久化到 `%LOCALAPPDATA%\kg-capture\settings.toml`。带版本号的设置格式会为后续版本新增的字段补充默认值；旧版程序遇到由更新设置架构写入的文件时会拒绝覆盖，以避免丢失新设置。已有的 `settings.conf` 会继续读取，并在下次保存时迁移。
+
 ## Build / 构建
 
 Requirements:
